@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calculateur d'heures supplémentaires</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#172033;background:#f4f6fa}
+*{box-sizing:border-box}body{margin:0;padding:24px}.wrap{max-width:1120px;margin:auto}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+h1{font-size:clamp(1.5rem,3vw,2.15rem);margin:0 0 6px}p{color:#647087;margin:0}
+.panel{background:white;border:1px solid #e3e8f0;border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 4px 16px #17203308}
+.toolbar{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.field{display:grid;gap:6px}label{font-size:.83rem;font-weight:650;color:#536078}
+input,select,button{font:inherit}input[type=month],input[type=time],input[type=number]{border:1px solid #d5dce7;border-radius:9px;padding:9px 10px;background:#fff;color:#172033}
+button{border:0;border-radius:9px;padding:10px 14px;font-weight:650;cursor:pointer;background:#243b67;color:#fff}
+button.secondary{background:#edf1f7;color:#24334d}button.danger{background:#fff0f0;color:#a22}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+.metric{background:#f7f9fc;border:1px solid #e7ebf2;border-radius:12px;padding:14px}
+.metric strong{display:block;font-size:1.55rem;font-variant-numeric:tabular-nums;margin-top:5px}.metric span{font-size:.82rem;color:#68758b}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:790px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #edf0f5;vertical-align:middle}th{font-size:.78rem;color:#657188;font-weight:700}td{font-size:.9rem}
+td input[type=time]{width:112px}td input[type=number]{width:82px}td input[type=checkbox]{width:18px;height:18px;vertical-align:middle}
+.day{font-weight:650;white-space:nowrap}.sub{display:block;color:#7b879a;font-size:.75rem;font-weight:400}
+.result{font-variant-numeric:tabular-nums;white-space:nowrap}.double{color:#087a54;font-weight:750}.muted{color:#8791a2}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.note{font-size:.82rem;line-height:1.5;color:#657188;margin-top:12px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.8rem;color:#657188;margin-top:12px}
+.pip{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;background:#4677bb}.pip.green{background:#15966a}
+.empty{text-align:center;padding:30px;color:#7b879a}
+@media(max-width:760px){body{padding:14px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.panel{padding:14px}.metric strong{font-size:1.3rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+ <div><h1>Calculateur d'heures supplémentaires</h1><p>Saisie quotidienne, calcul automatique et récapitulatif mensuel.</p></div>
+ <div class="actions"><button class="secondary" id="export">Exporter en CSV</button><button class="danger" id="clear">Effacer le mois</button></div>
+</header>
+<section class="panel">
+ <div class="toolbar">
+  <div class="field"><label for="month">Mois à afficher</label><input id="month" type="month"></div>
+  <div class="field"><label>Horaires normaux</label><div style="padding:10px 0;font-weight:700">09:30 – 18:00</div></div>
+  <div class="field"><label>Règle de majoration</label><div style="padding:10px 0">Heures après 20h, dimanches et jours fériés : ×2</div></div>
+ </div>
+ <div class="cards">
+  <div class="metric"><span>Heures supplémentaires simples</span><strong id="simple">0h00</strong></div>
+  <div class="metric"><span>Heures supplémentaires doubles</span><strong id="double">0h00</strong></div>
+  <div class="metric"><span>Total équivalent (×2 inclus)</span><strong id="weighted">0h00</strong></div>
+  <div class="metric"><span>Journées renseignées</span><strong id="days">0</strong></div>
+ </div>
+</section>
+<section class="panel">
+ <div class="table-wrap">
+ <table>
+  <thead><tr><th>Jour</th><th>Début</th><th>Fin</th><th>Pause (min)</th><th>Férié manuel</th><th>Sup. simples</th><th>Sup. doubles</th></tr></thead>
+  <tbody id="rows"></tbody>
+ </table>
+ </div>
+ <div class="legend"><span><i class="pip"></i>Heures supplémentaires simples</span><span><i class="pip green"></i>Heures supplémentaires doubles</span></div>
+ <p class="note">Les dimanches et jours fériés nationaux français sont détectés automatiquement. La case « Férié manuel » permet d'ajouter un jour particulier. Les données sont sauvegardées dans le stockage local de ce navigateur sur cet appareil.</p>
+ <p class="note"><b>Convention de calcul de la pause :</b> comme seule sa durée est saisie (et non son horaire), elle est déduite en priorité de la plage normale 09h30–18h00. Si la pause dépasse cette plage, le reste est déduit des heures supplémentaires en fin de journée. Les heures de travail après minuit sont prises en charge.</p>
+</section>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const monthInput=$('#month'), rows=$('#rows');
+const pad=n=>String(n).padStart(2,'0');
+const minsToText=m=>{m=Math.max(0,Math.round(m));return `${Math.floor(m/60)}h${pad(m%60)}`};
+const keyFor=month=>`overtime-calculator-${month}`;
+const parseTime=s=>{if(!s)return null;const [h,m]=s.split(':').map(Number);return h*60+m};
+const dateKey=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+function easterSunday(year){
+ const a=year%19,b=Math.floor(year/100),c=year%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),month=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;
+ return new Date(year,month-1,day);
+}
+function holidays(year){
+ const fixed=['01-01','05-01','05-08','07-14','08-15','11-01','11-11','12-25'];
+ const set=new Set(fixed.map(x=>`${year}-${x}`));
+ const easter=easterSunday(year);
+ for(const offset of [1,39,50]){const d=new Date(easter);d.setDate(d.getDate()+offset);set.add(dateKey(d))}
+ return set;
+}
+function emptyRecord(){return {start:'',end:'',pause:0,manual:false}}
+function loadMonth(month){try{return JSON.parse(localStorage.getItem(keyFor(month))||'{}')}catch{return {}}}
+function saveMonth(data){localStorage.setItem(keyFor(monthInput.value),JSON.stringify(data))}
+function calculate(rec,date,holidaySet){
+ const start=parseTime(rec.start), end0=parseTime(rec.end);
+ if(start===null||end0===null)return {simple:0,double:0,worked:0,valid:false};
+ let end=end0;if(end<=start)end+=1440;
+ let pause=Math.max(0,Number(rec.pause)||0);
+ const isSpecial=date.getDay()===0||holidaySet.has(dateKey(date))||!!rec.manual;
+ const normalStart=570,normalEnd=1080;
+ const normalOverlap=Math.max(0,Math.min(end,normalEnd)-Math.max(start,normalStart));
+ const normalPause=Math.min(pause,normalOverlap);
+ const remainingPause=pause-normalPause;
+ const effectiveEnd=Math.max(start,end-remainingPause);
+ const before=Math.max(0,Math.min(effectiveEnd,normalStart)-start);
+ const normalWorked=Math.max(0,Math.min(effectiveEnd,normalEnd)-Math.max(start,normalStart)-normalPause);
+ const after18=Math.max(0,effectiveEnd-Math.max(start,normalEnd));
+ let simple=0,dbl=0;
+ if(isSpecial){dbl=before+normalWorked+after18}
+ else {
+   simple+=before;
+   const after20=Math.max(0,effectiveEnd-Math.max(start,1200));
+   dbl=after20;
+   simple+=Math.max(0,after18-after20);
+ }
+ return {simple,dbl,worked:Math.max(0,end-start-pause),valid:true};
+}
+function render(){
+ const month=monthInput.value;if(!month)return;
+ const [year,mon]=month.split('-').map(Number),count=new Date(year,mon,0).getDate();
+ const data=loadMonth(month),holidaySet=holidays(year);rows.innerHTML='';
+ for(let day=1;day<=count;day++){
+  const date=new Date(year,mon-1,day),key=String(day),rec={...emptyRecord(),...(data[key]||{})};
+  const tr=document.createElement('tr');
+  const weekday=new Intl.DateTimeFormat('fr-FR',{weekday:'long'}).format(date);
+  const isHoliday=holidaySet.has(dateKey(date));
+  const label=date.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'});
+  tr.innerHTML=`<td class="day">${weekday} ${label}<span class="sub">${date.getDay()===0?'Dimanche':isHoliday?'Jour férié':''}</span></td>
+   <td><input type="time" aria-label="Début ${label}" data-field="start" value="${rec.start||''}"></td>
+   <td><input type="time" aria-label="Fin ${label}" data-field="end" value="${rec.end||''}"></td>
+   <td><input type="number" min="0" max="1440" step="5" aria-label="Pause en minutes ${label}" data-field="pause" value="${Number(rec.pause)||0}"></td>
+   <td><label style="display:flex;align-items:center;gap:6px;font-weight:400"><input type="checkbox" data-field="manual" ${rec.manual?'checked':''}> Oui</label></td>
+   <td class="result" data-out="simple">—</td><td class="result" data-out="double">—</td>`;
+  tr.dataset.day=key;rows.appendChild(tr);
+ }
+ rows.querySelectorAll('input').forEach(input=>input.addEventListener('input',update));
+ rows.querySelectorAll('input[type=checkbox]').forEach(input=>input.addEventListener('change',update));
+ update();
+}
+function update(){
+ const month=monthInput.value;if(!month)return;
+ const [year,mon]=month.split('-').map(Number),holidaySet=holidays(year),data={};
+ let simple=0,dbl=0,workedDays=0;
+ rows.querySelectorAll('tr').forEach(tr=>{
+  const rec={};tr.querySelectorAll('[data-field]').forEach(el=>rec[el.dataset.field]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value)||0:el.value);
+  data[tr.dataset.day]=rec;
+  const date=new Date(year,mon-1,Number(tr.dataset.day));
+  const result=calculate(rec,date,holidaySet);
+  tr.querySelector('[data-out=simple]').textContent=result.valid?minsToText(result.simple):'—';
+  tr.querySelector('[data-out=double]').textContent=result.valid?minsToText(result.dbl):'—';
+  if(result.valid){simple+=result.simple;dbl+=result.dbl;workedDays++}
+ });
+ saveMonth(data);
+ $('#simple').textContent=minsToText(simple);
+ $('#double').textContent=minsToText(dbl);
+ $('#weighted').textContent=minsToText(simple+dbl*2);
+ $('#days').textContent=workedDays;
+}
+monthInput.value=`${new Date().getFullYear()}-${pad(new Date().getMonth()+1)}`;
+monthInput.addEventListener('change',render);
+$('#clear').addEventListener('click',()=>{if(confirm('Effacer toutes les saisies de ce mois ?')){localStorage.removeItem(keyFor(monthInput.value));render()}});
+$('#export').addEventListener('click',()=>{
+ const month=monthInput.value,[year,mon]=month.split('-').map(Number),holidaySet=holidays(year),data=loadMonth(month);
+ const lines=[['Date','Début','Fin','Pause (minutes)','Jour férié manuel','Heures sup simples (minutes)','Heures sup doubles (minutes)']];
+ Object.entries(data).sort((a,b)=>Number(a[0])-Number(b[0])).forEach(([day,rec])=>{
+  const date=new Date(year,mon-1,Number(day)),r=calculate(rec,date,holidaySet);
+  if(r.valid)lines.push([dateKey(date),rec.start,rec.end,rec.pause,rec.manual?'Oui':'Non',Math.round(r.simple),Math.round(r.dbl)]);
+ });
+ const csv='\uFEFF'+lines.map(row=>row.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(';')).join('\r\n');
+ const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download=`heures-supplementaires-${month}.csv`;a.click();URL.revokeObjectURL(url);
+});
+render();
+</script>
+</body></html>
